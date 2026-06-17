@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Criteria Table Generator</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 30px; background: #fafafa; }
+    textarea { width: 100%; height: 300px; font-family: monospace; font-size: 14px; padding: 10px; box-sizing: border-box; }
+    button { margin-top: 12px; margin-right: 10px; padding: 10px 16px; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: 25px; background: white; }
+    th, td { border: 1px solid #ccc; padding: 8px; vertical-align: top; text-align: left; }
+    th { background: #f0f0f0; }
+    tfoot td { background: #f7f7f7; font-weight: bold; }
+    .criteria { width: 48%; }
+    .points { width: 70px; text-align: center; }
+    .eval { width: 110px; text-align: center; }
+    .notes { width: 240px; }
+    input, textarea.note-box { width: 100%; box-sizing: border-box; font-size: 14px; }
+    input[type="number"] { text-align: center; }
+    textarea.note-box { height: 55px; resize: vertical; }
+    .error { color: red; font-weight: bold; margin-top: 15px; }
+  </style>
+</head>
+
+<body>
+<h1>Criteria Table Generator</h1>
+
+<p>Paste the criteria list below. Each criterion should start with something like <b>[+7]</b> or <b>[-10]</b>.</p>
+
+<textarea id="criteriaInput"></textarea>
+<br>
+
+<button onclick="generateTable()">Generate Table</button>
+
+<div id="output"></div>
+
+<script>
+function generateTable() {
+  const input = document.getElementById("criteriaInput").value.trim();
+  const output = document.getElementById("output");
+
+  output.innerHTML = "";
+
+  if (!input) {
+    output.innerHTML = "<p class='error'>Please paste criteria first.</p>";
+    return;
+  }
+
+  // Finds every [+N] or [-N] marker and captures text until the next marker.
+  // It does not require each criterion to start on a new line.
+  const regex = /\[([+-]?\d+)\]\s*([\s\S]*?)(?=\s*\[[+-]?\d+\]\s*|$)/g;
+
+  let matches = [];
+  let match;
+
+  while ((match = regex.exec(input)) !== null) {
+    const criterionText = match[2].trim();
+
+    if (criterionText.length > 0) {
+      matches.push({
+        points: Number(match[1]),
+        criterion: criterionText
+      });
+    }
+  }
+
+  if (matches.length === 0) {
+    output.innerHTML =
+      "<p class='error'>No criteria found. Make sure each criterion starts with something like [+7] or [-10].</p>";
+    return;
+  }
+
+  let html = `
+  <table>
+    <thead>
+      <tr>
+        <th>Criteria #</th>
+        <th class="criteria">Criteria</th>
+        <th class="points">Points</th>
+        <th class="eval">GPT eval</th>
+        <th class="eval">Gemini eval</th>
+        <th class="eval">Claude eval</th>
+        <th class="notes">Notes</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  matches.forEach((item, index) => {
+    html += `
+      <tr>
+        <td>${index + 1}</td>
+        <td class="criteria">${escapeHtml(item.criterion)}</td>
+        <td class="points">${item.points}</td>
+        <td><input type="number" class="gpt-score" value="0" min="0" max="1" step="1" oninput="forceBinary(this)"></td>
+        <td><input type="number" class="gemini-score" value="0" min="0" max="1" step="1" oninput="forceBinary(this)"></td>
+        <td><input type="number" class="claude-score" value="0" min="0" max="1" step="1" oninput="forceBinary(this)"></td>
+        <td><textarea class="note-box"></textarea></td>
+      </tr>`;
+  });
+
+  html += `
+    </tbody>
+
+    <tfoot>
+      <tr>
+        <td colspan="3">Weighted total</td>
+        <td id="gptTotal" class="eval">0.00</td>
+        <td id="geminiTotal" class="eval">0.00</td>
+        <td id="claudeTotal" class="eval">0.00</td>
+        <td></td>
+      </tr>
+      <tr>
+        <td colspan="3">Percentage</td>
+        <td id="gptPercent" class="eval">0.00%</td>
+        <td id="geminiPercent" class="eval">0.00%</td>
+        <td id="claudePercent" class="eval">0.00%</td>
+        <td></td>
+      </tr>
+      <tr>
+        <td colspan="3">Maximum possible score</td>
+        <td id="maxScore" colspan="3" class="eval">0.00</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <button onclick="calculateTotals()">Recalculate Totals</button>
+  `;
+
+  output.innerHTML = html;
+  calculateTotals();
+}
+
+function forceBinary(input) {
+  const value = Number(input.value);
+
+  if (value <= 0 || isNaN(value)) {
+    input.value = 0;
+  } else {
+    input.value = 1;
+  }
+
+  calculateTotals();
+}
+
+function calculateTotals() {
+  const rows = document.querySelectorAll("tbody tr");
+
+  let maxScore = 0;
+
+  let gptTotal = 0;
+  let geminiTotal = 0;
+  let claudeTotal = 0;
+
+  rows.forEach(row => {
+    const points = Number(row.querySelector(".points").textContent) || 0;
+
+    const gptScore = Number(row.querySelector(".gpt-score").value) || 0;
+    const geminiScore = Number(row.querySelector(".gemini-score").value) || 0;
+    const claudeScore = Number(row.querySelector(".claude-score").value) || 0;
+
+    gptTotal += points * gptScore;
+    geminiTotal += points * geminiScore;
+    claudeTotal += points * claudeScore;
+
+    // Only positive criteria define the maximum possible score.
+    // Negative criteria act as penalties only.
+    if (points > 0) {
+      maxScore += points;
+    }
+  });
+
+  const gptPercent = maxScore !== 0 ? 100 * gptTotal / maxScore : 0;
+  const geminiPercent = maxScore !== 0 ? 100 * geminiTotal / maxScore : 0;
+  const claudePercent = maxScore !== 0 ? 100 * claudeTotal / maxScore : 0;
+
+  document.getElementById("gptTotal").textContent = gptTotal.toFixed(2);
+  document.getElementById("geminiTotal").textContent = geminiTotal.toFixed(2);
+  document.getElementById("claudeTotal").textContent = claudeTotal.toFixed(2);
+
+  document.getElementById("gptPercent").textContent = gptPercent.toFixed(2) + "%";
+  document.getElementById("geminiPercent").textContent = geminiPercent.toFixed(2) + "%";
+  document.getElementById("claudePercent").textContent = claudePercent.toFixed(2) + "%";
+
+  document.getElementById("maxScore").textContent = maxScore.toFixed(2);
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+</script>
+
+</body>
+</html>
