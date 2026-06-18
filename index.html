@@ -2,30 +2,42 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Criteria Table Generator</title>
+  <title>Model Rubric Evaluator</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 30px; background: #fafafa; }
-    textarea { width: 100%; height: 300px; font-family: monospace; font-size: 14px; padding: 10px; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 30px; background: #fafafa; color: #222; }
+    h1 { margin-bottom: 8px; }
+    textarea { width: 100%; height: 280px; font-family: monospace; font-size: 14px; padding: 10px; box-sizing: border-box; }
     button { margin-top: 12px; margin-right: 10px; padding: 10px 16px; cursor: pointer; }
-    table { width: 100%; border-collapse: collapse; margin-top: 25px; background: white; }
+    select { padding: 5px; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 25px; background: white; font-size: 13px; }
     th, td { border: 1px solid #ccc; padding: 8px; vertical-align: top; text-align: left; }
-    th { background: #f0f0f0; }
-    tfoot td { background: #f7f7f7; font-weight: bold; }
-    .criteria { width: 48%; }
+    th { background: #f0f0f0; text-align: center; }
+    tfoot td { background: #f7f7f7; font-weight: bold; text-align: center; }
+    .num { width: 55px; text-align: center; }
+    .criteria { min-width: 320px; max-width: 520px; }
     .points { width: 70px; text-align: center; }
-    .eval { width: 110px; text-align: center; }
-    .notes { width: 240px; }
-    input, textarea.note-box { width: 100%; box-sizing: border-box; font-size: 14px; }
-    input[type="number"] { text-align: center; }
-    textarea.note-box { height: 55px; resize: vertical; }
+    .logic { width: 115px; text-align: center; }
+    .conditions { min-width: 260px; max-width: 330px; }
+    .eval { width: 70px; text-align: center; font-weight: bold; }
+    .notes { min-width: 220px; }
+    .note-box { width: 100%; height: 70px; box-sizing: border-box; font-size: 13px; resize: vertical; }
+    .condition-item { display: flex; gap: 6px; align-items: flex-start; margin-bottom: 6px; line-height: 1.25; }
+    .condition-item input { margin-top: 2px; flex-shrink: 0; }
+    .criterion-main { font-weight: bold; margin-bottom: 8px; }
+    .conditions-label { font-size: 12px; color: #555; margin-bottom: 6px; font-style: italic; }
+    .score-one { background: #d4edda; }
+    .score-zero { background: #f8d7da; }
     .error { color: red; font-weight: bold; margin-top: 15px; }
   </style>
 </head>
 
 <body>
-<h1>Criteria Table Generator</h1>
+<h1>Model Rubric Evaluator</h1>
 
-<p>Paste the criteria list below. Each criterion should start with something like <b>[+7]</b> or <b>[-10]</b>.</p>
+<p>
+  Paste the rubric criteria below. Each criterion should start with something like
+  <b>[+7]</b> or <b>[-10]</b>. Conditions are extracted from the text after <b>hold:</b>.
+</p>
 
 <textarea id="criteriaInput"></textarea>
 <br>
@@ -46,25 +58,26 @@ function generateTable() {
     return;
   }
 
-  // Finds every [+N] or [-N] marker and captures text until the next marker.
-  // It does not require each criterion to start on a new line.
   const regex = /\[([+-]?\d+)\]\s*([\s\S]*?)(?=\s*\[[+-]?\d+\]\s*|$)/g;
 
-  let matches = [];
+  let criteria = [];
   let match;
 
   while ((match = regex.exec(input)) !== null) {
-    const criterionText = match[2].trim();
+    const fullText = match[2].trim();
 
-    if (criterionText.length > 0) {
-      matches.push({
+    if (fullText.length > 0) {
+      criteria.push({
         points: Number(match[1]),
-        criterion: criterionText
+        fullText: fullText,
+        mainText: extractMainCriterion(fullText),
+        conditions: extractConditions(fullText),
+        defaultMode: inferDefaultMode(fullText)
       });
     }
   }
 
-  if (matches.length === 0) {
+  if (criteria.length === 0) {
     output.innerHTML =
       "<p class='error'>No criteria found. Make sure each criterion starts with something like [+7] or [-10].</p>";
     return;
@@ -74,27 +87,51 @@ function generateTable() {
   <table>
     <thead>
       <tr>
-        <th>Criteria #</th>
-        <th class="criteria">Criteria</th>
+        <th class="num">#</th>
+        <th class="criteria">Criterion</th>
         <th class="points">Points</th>
+        <th class="logic">Logic</th>
+        <th class="conditions">GPT conditions</th>
         <th class="eval">GPT eval</th>
+        <th class="conditions">Gemini conditions</th>
         <th class="eval">Gemini eval</th>
+        <th class="conditions">Claude conditions</th>
         <th class="eval">Claude eval</th>
         <th class="notes">Notes</th>
       </tr>
     </thead>
     <tbody>`;
 
-  matches.forEach((item, index) => {
+  criteria.forEach((item, index) => {
     html += `
-      <tr>
-        <td>${index + 1}</td>
-        <td class="criteria">${escapeHtml(item.criterion)}</td>
+      <tr data-row="${index}">
+        <td class="num">${index + 1}</td>
+        <td class="criteria">
+          <div class="criterion-main">${escapeHtml(item.mainText)}</div>
+          ${item.conditions.length > 0
+            ? "<div class='conditions-label'>Conditions after hold:</div>"
+            : "<div class='conditions-label'>No conditions found; use the single checkbox.</div>"
+          }
+        </td>
         <td class="points">${item.points}</td>
-        <td><input type="number" class="gpt-score" value="0" min="0" max="1" step="1" oninput="forceBinary(this)"></td>
-        <td><input type="number" class="gemini-score" value="0" min="0" max="1" step="1" oninput="forceBinary(this)"></td>
-        <td><input type="number" class="claude-score" value="0" min="0" max="1" step="1" oninput="forceBinary(this)"></td>
-        <td><textarea class="note-box"></textarea></td>
+
+        <td class="logic">
+          <select class="logic-select" onchange="recalculateRow(${index})">
+            <option value="AND" ${item.defaultMode === "AND" ? "selected" : ""}>AND / all</option>
+            <option value="OR" ${item.defaultMode === "OR" ? "selected" : ""}>OR / at least one</option>
+          </select>
+        </td>
+
+        <td class="conditions">${buildChecklist("gpt", index, item.conditions)}</td>
+        <td class="eval gpt-eval score-zero">0</td>
+
+        <td class="conditions">${buildChecklist("gemini", index, item.conditions)}</td>
+        <td class="eval gemini-eval score-zero">0</td>
+
+        <td class="conditions">${buildChecklist("claude", index, item.conditions)}</td>
+        <td class="eval claude-eval score-zero">0</td>
+
+        <td class="notes"><textarea class="note-box"></textarea></td>
       </tr>`;
   });
 
@@ -103,42 +140,154 @@ function generateTable() {
 
     <tfoot>
       <tr>
-        <td colspan="3">Weighted total</td>
+        <td colspan="5">Weighted total</td>
         <td id="gptTotal" class="eval">0.00</td>
+        <td></td>
         <td id="geminiTotal" class="eval">0.00</td>
+        <td></td>
         <td id="claudeTotal" class="eval">0.00</td>
         <td></td>
       </tr>
       <tr>
-        <td colspan="3">Percentage</td>
+        <td colspan="5">Percentage</td>
         <td id="gptPercent" class="eval">0.00%</td>
+        <td></td>
         <td id="geminiPercent" class="eval">0.00%</td>
+        <td></td>
         <td id="claudePercent" class="eval">0.00%</td>
         <td></td>
       </tr>
       <tr>
-        <td colspan="3">Maximum possible score</td>
-        <td id="maxScore" colspan="3" class="eval">0.00</td>
+        <td colspan="5">Maximum possible score</td>
+        <td id="maxScore" colspan="5" class="eval">0.00</td>
         <td></td>
       </tr>
     </tfoot>
   </table>
 
-  <button onclick="calculateTotals()">Recalculate Totals</button>
+  <button onclick="recalculateAllRows()">Recalculate Totals</button>
   `;
 
   output.innerHTML = html;
+  recalculateAllRows();
+}
+
+function inferDefaultMode(text) {
+  const lower = text.toLowerCase();
+
+  if (lower.includes("at least one") || lower.includes("any of the following")) {
+    return "OR";
+  }
+
+  return "AND";
+}
+
+function extractMainCriterion(text) {
+  const marker = /hold\s*:/i;
+  const match = text.search(marker);
+
+  if (match >= 0) {
+    return text.slice(0, match + text.match(marker)[0].length).trim();
+  }
+
+  return text.trim();
+}
+
+function extractConditions(text) {
+  const marker = /hold\s*:/i;
+  const matchIndex = text.search(marker);
+
+  if (matchIndex < 0) {
+    return [];
+  }
+
+  const matchedMarker = text.match(marker)[0];
+  const conditionBlock = text.slice(matchIndex + matchedMarker.length).trim();
+
+  const bulletRegex = /-\s+([\s\S]*?)(?=\s+-\s+|$)/g;
+
+  let conditions = [];
+  let match;
+
+  while ((match = bulletRegex.exec(conditionBlock)) !== null) {
+    const condition = match[1].trim();
+    if (condition.length > 0) {
+      conditions.push(condition);
+    }
+  }
+
+  if (conditions.length === 0 && conditionBlock.length > 0) {
+    conditions.push(conditionBlock);
+  }
+
+  return conditions;
+}
+
+function buildChecklist(model, rowIndex, conditions) {
+  const list = conditions.length > 0
+    ? conditions
+    : ["Criterion satisfied"];
+
+  return list.map((condition) => `
+    <label class="condition-item">
+      <input
+        type="checkbox"
+        class="${model}-check"
+        data-model="${model}"
+        data-row="${rowIndex}"
+        onchange="updateRowScore(${rowIndex}, '${model}')"
+      >
+      <span>${escapeHtml(condition)}</span>
+    </label>
+  `).join("");
+}
+
+function getRowMode(row) {
+  const select = row.querySelector(".logic-select");
+  return select ? select.value : "AND";
+}
+
+function updateRowScore(rowIndex, model) {
+  const row = document.querySelector(`tr[data-row="${rowIndex}"]`);
+  if (!row) return;
+
+  const checks = row.querySelectorAll(`.${model}-check`);
+  const evalCell = row.querySelector(`.${model}-eval`);
+  const mode = getRowMode(row);
+
+  const checkedCount = Array.from(checks).filter(check => check.checked).length;
+  const totalChecks = checks.length;
+
+  let score = 0;
+
+  if (mode === "AND") {
+    score = totalChecks > 0 && checkedCount === totalChecks ? 1 : 0;
+  } else {
+    score = checkedCount > 0 ? 1 : 0;
+  }
+
+  evalCell.textContent = score;
+
+  evalCell.classList.remove("score-one", "score-zero");
+  evalCell.classList.add(score === 1 ? "score-one" : "score-zero");
+
   calculateTotals();
 }
 
-function forceBinary(input) {
-  const value = Number(input.value);
+function recalculateRow(rowIndex) {
+  updateRowScore(rowIndex, "gpt");
+  updateRowScore(rowIndex, "gemini");
+  updateRowScore(rowIndex, "claude");
+  calculateTotals();
+}
 
-  if (value <= 0 || isNaN(value)) {
-    input.value = 0;
-  } else {
-    input.value = 1;
-  }
+function recalculateAllRows() {
+  const rows = document.querySelectorAll("tbody tr");
+
+  rows.forEach(row => {
+    const rowIndex = row.getAttribute("data-row");
+    recalculateRow(rowIndex);
+  });
 
   calculateTotals();
 }
@@ -155,16 +304,14 @@ function calculateTotals() {
   rows.forEach(row => {
     const points = Number(row.querySelector(".points").textContent) || 0;
 
-    const gptScore = Number(row.querySelector(".gpt-score").value) || 0;
-    const geminiScore = Number(row.querySelector(".gemini-score").value) || 0;
-    const claudeScore = Number(row.querySelector(".claude-score").value) || 0;
+    const gptScore = Number(row.querySelector(".gpt-eval").textContent) || 0;
+    const geminiScore = Number(row.querySelector(".gemini-eval").textContent) || 0;
+    const claudeScore = Number(row.querySelector(".claude-eval").textContent) || 0;
 
     gptTotal += points * gptScore;
     geminiTotal += points * geminiScore;
     claudeTotal += points * claudeScore;
 
-    // Only positive criteria define the maximum possible score.
-    // Negative criteria act as penalties only.
     if (points > 0) {
       maxScore += points;
     }
